@@ -801,6 +801,26 @@ impl RistrettoPoint {
         // uniform distribution.
         R_1 + R_2
     }
+
+    #[cfg(feature = "group")]
+    /// Maps the input bytes to a `RistrettoPoint` using the RFC 9380 random-oracle
+    /// construction: expand `msg` with the provided `ExpandMsg` implementation `X`
+    /// and domain separator `dst` to 64 uniform bytes, then apply
+    /// [`RistrettoPoint::from_uniform_bytes`].
+    pub fn hash_to_curve_ro<X>(msg: &[u8], dst: &[u8]) -> Self
+    where
+        X: for<'a> elliptic_curve::hash2curve::ExpandMsg<'a>,
+    {
+        use elliptic_curve::hash2curve::Expander;
+
+        let dst = [dst];
+        let mut random_bytes = [0u8; 64];
+        let mut expander =
+            X::expand_message(&[msg], &dst, random_bytes.len()).expect("expand_message failed");
+        expander.fill_bytes(&mut random_bytes);
+
+        RistrettoPoint::from_uniform_bytes(&random_bytes)
+    }
 }
 
 impl Identity for RistrettoPoint {

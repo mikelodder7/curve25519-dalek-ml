@@ -733,6 +733,80 @@ impl EdwardsPoint {
             }
         }
     }
+
+    #[cfg(feature = "group")]
+    /// Maps the input bytes to the curve using the RFC 9380 random-oracle suite
+    /// [`hash_to_curve`](https://datatracker.ietf.org/doc/rfc9380/) for
+    /// `edwards25519_XMD:SHA-512_ELL2_RO_` (sections 8.5 and J.5).
+    ///
+    /// This is the uniform ("random oracle") variant. It is distinct from
+    /// [`EdwardsPoint::hash_to_curve`], which implements the non-uniform `_NU_` suite.
+    pub fn hash_to_curve_ro<X>(msg: &[u8], dst: &[u8]) -> Self
+    where
+        X: for<'a> elliptic_curve::hash2curve::ExpandMsg<'a>,
+    {
+        use elliptic_curve::hash2curve::Expander;
+
+        let dst = [dst];
+        let mut random_bytes = [0u8; 96];
+        let mut expander =
+            X::expand_message(&[msg], &dst, random_bytes.len()).expect("expand_message failed");
+        expander.fill_bytes(&mut random_bytes);
+
+        let u0 = FieldElement::from_xmd_bytes_mod_order(&random_bytes[..48]);
+        let u1 = FieldElement::from_xmd_bytes_mod_order(&random_bytes[48..]);
+
+        let q0 = map_to_edwards(u0);
+        let q1 = map_to_edwards(u1);
+        let p = q0 + q1;
+        p.mul_by_cofactor()
+    }
+}
+
+#[cfg(feature = "group")]
+fn map_to_edwards(e: FieldElement) -> EdwardsPoint {
+    let (u, v) = elligator_encode(e);
+    let (x, y) = montgomery_to_edwards(u, v);
+    affine_to_edwards(x, y)
+}
+
+#[cfg(feature = "group")]
+fn elligator_encode(e: FieldElement) -> (FieldElement, FieldElement) {
+    let mut t1 = &(&FieldElement::ONE + &FieldElement::ONE) * &e.square(); // 2u^2
+    let e1 = t1.ct_eq(&FieldElement::MINUS_ONE);
+    t1.conditional_assign(&FieldElement::ZERO, e1); // if 2u^2 == -1, t1 = 0
+    let x1 = &(&t1 + &FieldElement::ONE).invert() * &FieldElement::EDWARDS_MINUS_ELL_A; // -A / t1 + 1
+    let min_x1 = -(&x1);
+
+    let gx1 = &(&(&(&x1 + &FieldElement::EDWARDS_ELL_A) * &x1) + &FieldElement::ONE) * &x1; // x1 * (x1 * (x1 + A) + 1)
+    let x2 = &min_x1 - &FieldElement::EDWARDS_ELL_A; // -x1 - A
+    let gx2 = &t1 * &gx1;
+    let (is_square, root1) = FieldElement::sqrt_ratio_i(&gx1, &FieldElement::ONE);
+    let neg_root1 = -(&root1);
+    let (_, root2) = FieldElement::sqrt_ratio_i(&gx2, &FieldElement::ONE);
+
+    let x = FieldElement::conditional_select(&x2, &x1, is_square);
+    let y = FieldElement::conditional_select(&root2, &neg_root1, is_square);
+    (x, y)
+}
+
+#[cfg(feature = "group")]
+fn montgomery_to_edwards(u: FieldElement, v: FieldElement) -> (FieldElement, FieldElement) {
+    let x = &(&v.invert() * &u) * &FieldElement::MONTGOMERY_TO_EDWARDS_INV_SQRT_D;
+    let u1 = &u - &FieldElement::ONE;
+    let u2 = &u + &FieldElement::ONE;
+    let y = &u1 * &u2.invert();
+    (x, y)
+}
+
+#[cfg(feature = "group")]
+fn affine_to_edwards(x: FieldElement, y: FieldElement) -> EdwardsPoint {
+    EdwardsPoint {
+        X: x,
+        Y: y,
+        Z: FieldElement::ONE,
+        T: &x * &y,
+    }
 }
 
 // ------------------------------------------------------------------------
@@ -2535,6 +2609,53 @@ mod test {
 
             let computed = EdwardsPoint::hash_to_curve::<sha2::Sha512>(&[&input], &[dst]);
             assert_eq!(computed, expected_output, "Failed in test {}", index);
+        }
+    }
+
+    #[cfg(feature = "group")]
+    #[test]
+    fn hash_to_curve_ro_test_vectors() {
+        // RFC 9380 random-oracle suite `edwards25519_XMD:SHA-512_ELL2_RO_`.
+        const DST: &[u8] = b"QUUX-V01-CS02-with-edwards25519_XMD:SHA-512_ELL2_RO_";
+        let q128 = {
+            let mut m = b"q128_".to_vec();
+            m.resize(5 + 128, b'q');
+            m
+        };
+        let a512 = {
+            let mut m = b"a512_".to_vec();
+            m.resize(5 + 512, b'a');
+            m
+        };
+        let msgs: [(&[u8], &str); 5] = [
+            (
+                b"",
+                "09a6c8561a0b22bef63124c588ce4c62ea83a3c899763af26d795302e115dc21",
+            ),
+            (
+                b"abc",
+                "9a8395b88338f22e435bbd301183e7f20a5f9de643f11882fb237f88268a5531",
+            ),
+            (
+                b"abcdef0123456789",
+                "53060a3d140e7fbcda641ed3cf42c88a75411e648a1add71217f70ea8ec561a6",
+            ),
+            (
+                q128.as_slice(),
+                "2eca15e355fcfa39d2982f67ddb0eea138e2994f5956ed37b7f72eea5e89d2f7",
+            ),
+            (
+                a512.as_slice(),
+                "6dc2fc04f266c5c27f236a80b14f92ccd051ef1ff027f26a07f8c0f327d8f995",
+            ),
+        ];
+        for (input, expected_hex) in msgs {
+            let pt = EdwardsPoint::hash_to_curve_ro::<
+                elliptic_curve::hash2curve::ExpandMsgXmd<sha2::Sha512>,
+            >(input, DST);
+            let mut expected_bytes = hex::decode(expected_hex).unwrap();
+            expected_bytes.reverse();
+            assert_eq!(expected_bytes, pt.compress().to_bytes());
         }
     }
 }
