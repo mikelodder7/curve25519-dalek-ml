@@ -11,8 +11,8 @@
 
 //! Field arithmetic modulo \\(p = 2\^{255} - 19\\).
 //!
-//! The `curve25519_dalek::field` module provides a type alias
-//! `curve25519_dalek::field::FieldElement` to a field element type
+//! The `curve25519_dalek_ml::field` module provides a type alias
+//! `curve25519_dalek_ml::field::FieldElement` to a field element type
 //! defined in the `backend` module; either `FieldElement51` or
 //! `FieldElement2625`.
 //!

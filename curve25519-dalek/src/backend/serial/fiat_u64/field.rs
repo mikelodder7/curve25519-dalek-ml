@@ -37,12 +37,12 @@ use fiat_crypto::curve25519_64::*;
 ///
 /// # Note
 ///
-/// The `curve25519_dalek::field` module provides a type alias
-/// `curve25519_dalek::field::FieldElement` to either `FieldElement51`
+/// The `curve25519_dalek_ml::field` module provides a type alias
+/// `curve25519_dalek_ml::field::FieldElement` to either `FieldElement51`
 /// or `FieldElement2625`.
 ///
 /// The backend-specific type `FieldElement51` should not be used
-/// outside of the `curve25519_dalek::field` module.
+/// outside of the `curve25519_dalek_ml::field` module.
 #[derive(Copy, Clone)]
 pub struct FieldElement51(pub(crate) fiat_25519_tight_field_element);
 
